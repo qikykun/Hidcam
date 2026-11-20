@@ -41,6 +41,7 @@ class CameraService : LifecycleService() {
 
     private lateinit var windowManager: WindowManager
     private var bar: View? = null
+    private var barParams: WindowManager.LayoutParams? = null
 
     private var imageCapture: ImageCapture? = null
     private var videoCapture: VideoCapture<Recorder>? = null
@@ -49,14 +50,25 @@ class CameraService : LifecycleService() {
 
     private var wakeLock: PowerManager.WakeLock? = null
     private val handler = Handler(Looper.getMainLooper())
-    private var longPressRunnable: Runnable? = null
-    private var longPressFired = false
+
+    private var repositionRunnable: Runnable? = null
+    private var videoRunnable: Runnable? = null
+    private var downX = 0f
+    private var lastRawY = 0f
+    private var dragStartRawY = 0f
+    private var initialBarY = 0
+    private var hasSlidLeft = false
+    private var dragMode = false
+    private var videoToggled = false
 
     companion object {
         const val ACTION_START = "start"
         const val ACTION_STOP = "stop"
         private const val CHANNEL = "kamera"
         private const val NOTIF_ID = 1
+        private const val MODE_IDLE = 0
+        private const val MODE_RECORDING = 1
+        private const val MODE_DRAG = 2
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -88,7 +100,7 @@ class CameraService : LifecycleService() {
             )
             videoCapture = vcBuilder.build()
             imageCapture = ImageCapture.Builder()
-                .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
+                .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
                 .build()
             provider.unbindAll()
             provider.bindToLifecycle(
@@ -101,10 +113,10 @@ class CameraService : LifecycleService() {
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         val view = View(this)
         view.isClickable = true
-        setBarColor(view, false)
+        colorFor(view, MODE_IDLE)
 
         val params = WindowManager.LayoutParams(
-            dp(14), dp(90),
+            dp(12), dp(68),
             if (Build.VERSION.SDK_INT >= 26)
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             else
@@ -113,21 +125,59 @@ class CameraService : LifecycleService() {
             PixelFormat.TRANSLUCENT
         )
         params.gravity = Gravity.END or Gravity.CENTER_VERTICAL
+        barParams = params
+
+        val slideThreshold = dp(24).toFloat()
 
         view.setOnTouchListener { v, event ->
-            when (event.action) {
+            when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
-                    longPressFired = false
-                    longPressRunnable = Runnable {
-                        longPressFired = true
-                        toggleRecording(v)
+                    downX = event.rawX
+                    lastRawY = event.rawY
+                    hasSlidLeft = false
+                    dragMode = false
+                    videoToggled = false
+                    repositionRunnable = Runnable {
+                        if (!hasSlidLeft) {
+                            dragMode = true
+                            dragStartRawY = lastRawY
+                            initialBarY = barParams?.y ?: 0
+                            colorFor(v, MODE_DRAG)
+                        }
                     }
-                    handler.postDelayed(longPressRunnable!!, 2000)
+                    handler.postDelayed(repositionRunnable!!, 2000)
                     true
                 }
-                MotionEvent.ACTION_UP -> {
-                    longPressRunnable?.let { handler.removeCallbacks(it) }
-                    if (!longPressFired) takePhoto()
+                MotionEvent.ACTION_MOVE -> {
+                    lastRawY = event.rawY
+                    val dx = event.rawX - downX
+                    if (dragMode) {
+                        val p = barParams
+                        if (p != null) {
+                            p.y = initialBarY + (event.rawY - dragStartRawY).toInt()
+                            windowManager.updateViewLayout(v, p)
+                        }
+                    } else if (!hasSlidLeft && dx < -slideThreshold) {
+                        hasSlidLeft = true
+                        repositionRunnable?.let { handler.removeCallbacks(it) }
+                        videoRunnable = Runnable {
+                            videoToggled = true
+                            toggleRecording(v)
+                        }
+                        handler.postDelayed(videoRunnable!!, 1000)
+                    }
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    repositionRunnable?.let { handler.removeCallbacks(it) }
+                    videoRunnable?.let { handler.removeCallbacks(it) }
+                    if (dragMode) {
+                        dragMode = false
+                        colorFor(v, if (isRecording) MODE_RECORDING else MODE_IDLE)
+                    } else if (hasSlidLeft && !videoToggled) {
+                        takePhoto()
+                        pulse(v, 1.7f, 70)
+                    }
                     true
                 }
                 else -> false
@@ -138,14 +188,23 @@ class CameraService : LifecycleService() {
         windowManager.addView(view, params)
     }
 
-    private fun setBarColor(view: View, recording: Boolean) {
+    private fun colorFor(v: View, mode: Int) {
+        val alpha = when (mode) {
+            MODE_RECORDING -> 160
+            MODE_DRAG -> 100
+            else -> 35
+        }
         val d = GradientDrawable()
-        d.cornerRadius = dp(7).toFloat()
-        d.setColor(
-            if (recording) Color.argb(220, 255, 255, 255)
-            else Color.argb(90, 255, 255, 255)
-        )
-        view.background = d
+        d.cornerRadius = dp(6).toFloat()
+        d.setColor(Color.argb(alpha, 255, 255, 255))
+        v.background = d
+    }
+
+    private fun pulse(v: View, scale: Float, dur: Long) {
+        v.pivotX = v.width.toFloat()
+        v.animate().scaleX(scale).setDuration(dur).withEndAction {
+            v.animate().scaleX(1f).setDuration(dur).start()
+        }.start()
     }
 
     private fun toggleRecording(v: View) {
@@ -153,11 +212,13 @@ class CameraService : LifecycleService() {
             recording?.stop()
             recording = null
             isRecording = false
-            setBarColor(v, false)
+            colorFor(v, MODE_IDLE)
+            pulse(v, 2.4f, 140)
         } else {
             startRecording()
             isRecording = true
-            setBarColor(v, true)
+            colorFor(v, MODE_RECORDING)
+            pulse(v, 2.4f, 140)
         }
     }
 
