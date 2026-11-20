@@ -1,14 +1,18 @@
 package com.example.kamera
 
+import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.ContentValues
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.hardware.camera2.CaptureRequest
 import android.os.Build
 import android.os.PowerManager
 import android.provider.MediaStore
+import androidx.camera.camera2.interop.Camera2Interop
+import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.CameraSelector
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.video.MediaStoreOutputOptions
@@ -42,6 +46,7 @@ class CameraService : LifecycleService() {
         return START_STICKY
     }
 
+    @OptIn(ExperimentalCamera2Interop::class)
     private fun start() {
         startForegroundNotif()
         acquireWakeLock()
@@ -49,7 +54,14 @@ class CameraService : LifecycleService() {
         future.addListener({
             val provider = future.get()
             val recorder = Recorder.Builder().build()
-            val videoCapture = VideoCapture.withOutput(recorder)
+
+            val builder = VideoCapture.Builder(recorder)
+            Camera2Interop.Extender(builder).setCaptureRequestOption(
+                CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE,
+                CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON
+            )
+            val videoCapture = builder.build()
+
             provider.unbindAll()
             provider.bindToLifecycle(
                 this, CameraSelector.DEFAULT_BACK_CAMERA, videoCapture
@@ -58,6 +70,7 @@ class CameraService : LifecycleService() {
         }, ContextCompat.getMainExecutor(this))
     }
 
+    @SuppressLint("MissingPermission")
     private fun startRecording(videoCapture: VideoCapture<Recorder>) {
         val name = "KAM_" + SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
             .format(System.currentTimeMillis())
@@ -70,9 +83,9 @@ class CameraService : LifecycleService() {
             contentResolver, MediaStore.Video.Media.EXTERNAL_CONTENT_URI
         ).setContentValues(values).build()
 
-        // Tanpa .withAudioEnabled() = video tanpa suara (diam-diam)
         recording = videoCapture.output
             .prepareRecording(this, output)
+            .withAudioEnabled()
             .start(ContextCompat.getMainExecutor(this)) { }
     }
 
@@ -96,7 +109,9 @@ class CameraService : LifecycleService() {
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .setOngoing(true)
             .build()
-        startForeground(NOTIF_ID, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA)
+        val type = ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA or
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+        startForeground(NOTIF_ID, notif, type)
     }
 
     private fun acquireWakeLock() {
