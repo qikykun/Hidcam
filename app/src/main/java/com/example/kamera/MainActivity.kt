@@ -3,8 +3,10 @@ package com.example.kamera
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.view.View
 import android.widget.Button
 import androidx.activity.result.contract.ActivityResultContracts
@@ -13,6 +15,7 @@ import androidx.core.content.ContextCompat
 
 class MainActivity : AppCompatActivity() {
 
+    private lateinit var btnOverlay: Button
     private lateinit var btnStart: Button
     private lateinit var btnStop: Button
 
@@ -24,35 +27,39 @@ class MainActivity : AppCompatActivity() {
 
     private val requestPerms = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { }
+    ) { refresh() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
+        btnOverlay = findViewById(R.id.btnOverlay)
         btnStart = findViewById(R.id.btnStart)
         btnStop = findViewById(R.id.btnStop)
-        showRecording(false)
 
+        btnOverlay.setOnClickListener {
+            startActivity(
+                Intent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:$packageName")
+                )
+            )
+        }
         btnStart.setOnClickListener {
-            if (hasPerms()) {
-                send(CameraService.ACTION_START)
-                showRecording(true)
-            } else {
-                requestPerms.launch(permissions)
-            }
+            if (!hasPerms()) { requestPerms.launch(permissions); return@setOnClickListener }
+            send(CameraService.ACTION_START)
         }
-        btnStop.setOnClickListener {
-            send(CameraService.ACTION_STOP)
-            showRecording(false)
-        }
+        btnStop.setOnClickListener { send(CameraService.ACTION_STOP) }
 
-        requestPerms.launch(permissions)
+        if (!hasPerms()) requestPerms.launch(permissions)
     }
 
-    private fun showRecording(recording: Boolean) {
-        btnStart.visibility = if (recording) View.GONE else View.VISIBLE
-        btnStop.visibility = if (recording) View.VISIBLE else View.GONE
+    override fun onResume() { super.onResume(); refresh() }
+
+    private fun refresh() {
+        val canOverlay = Settings.canDrawOverlays(this)
+        btnOverlay.visibility = if (canOverlay) View.GONE else View.VISIBLE
+        btnStart.isEnabled = canOverlay
     }
 
     private fun hasPerms() = permissions.all {
