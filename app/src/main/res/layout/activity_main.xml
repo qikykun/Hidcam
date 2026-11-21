@@ -7,22 +7,29 @@
     android:padding="24dp">
 
     <Button
-        android:id="@+id/btnOverlay"
+        android:id="@+id/btnFloating"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Izinkan tampil di atas aplikasi" />
+        android:text="Mulai floating" />
 
     <Button
-        android:id="@+id/btnStart"
+        android:id="@+id/btnDrag"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="16dp"
-        android:text="Mulai batang floating" />
+        android:text="Pengaturan floating" />
 
     <Button
-        android:id="@+id/btnStop"
+        android:id="@+id/btnCamera"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="16dp"
-        android:text="Matikan batang" />
+        android:text="Setting kamera" />
+
+    <Button
+        android:id="@+id/btnClose"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:text="Tutup aplikasi" />
 </LinearLayout>

@@ -50,20 +50,20 @@ class CameraService : LifecycleService() {
 
     private var wakeLock: PowerManager.WakeLock? = null
     private val handler = Handler(Looper.getMainLooper())
+    private var longPressRunnable: Runnable? = null
+    private var longPressFired = false
 
-    private var repositionRunnable: Runnable? = null
-    private var videoRunnable: Runnable? = null
-    private var downX = 0f
-    private var lastRawY = 0f
-    private var dragStartRawY = 0f
-    private var initialBarY = 0
-    private var hasSlidLeft = false
     private var dragMode = false
-    private var videoToggled = false
+    private var dragDownRawY = 0f
+    private var dragInitialY = 0
 
     companion object {
         const val ACTION_START = "start"
         const val ACTION_STOP = "stop"
+        const val ACTION_DRAG_ON = "drag_on"
+        const val ACTION_DRAG_OFF = "drag_off"
+        const val ACTION_SET_CAMERA = "set_camera"
+        var isRunning = false
         private const val CHANNEL = "kamera"
         private const val NOTIF_ID = 1
         private const val MODE_IDLE = 0
@@ -76,15 +76,24 @@ class CameraService : LifecycleService() {
         when (intent?.action) {
             ACTION_START -> startAll()
             ACTION_STOP -> stopAll()
+            ACTION_DRAG_ON -> setDrag(true)
+            ACTION_DRAG_OFF -> setDrag(false)
+            ACTION_SET_CAMERA -> switchCamera()
         }
         return START_STICKY
     }
 
     private fun startAll() {
+        isRunning = true
         startForegroundNotif()
         acquireWakeLock()
         showBar()
         initCamera()
+    }
+
+    private fun currentSelector(): CameraSelector {
+        val front = getSharedPreferences("cfg", Context.MODE_PRIVATE).getBoolean("front", false)
+        return if (front) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
     }
 
     @OptIn(ExperimentalCamera2Interop::class)
@@ -104,9 +113,24 @@ class CameraService : LifecycleService() {
                 .build()
             provider.unbindAll()
             provider.bindToLifecycle(
-                this, CameraSelector.DEFAULT_BACK_CAMERA, videoCapture, imageCapture
+                this, currentSelector(), videoCapture, imageCapture
             )
         }, ContextCompat.getMainExecutor(this))
+    }
+
+    private fun switchCamera() {
+        if (isRecording) {
+            recording?.stop()
+            recording = null
+            isRecording = false
+            bar?.let { colorFor(it, MODE_IDLE) }
+        }
+        initCamera()
+    }
+
+    private fun setDrag(on: Boolean) {
+        dragMode = on
+        bar?.let { colorFor(it, if (on) MODE_DRAG else if (isRecording) MODE_RECORDING else MODE_IDLE) }
     }
 
     private fun showBar() {
@@ -116,7 +140,7 @@ class CameraService : LifecycleService() {
         colorFor(view, MODE_IDLE)
 
         val params = WindowManager.LayoutParams(
-            dp(12), dp(68),
+            dp(64), dp(128),
             if (Build.VERSION.SDK_INT >= 26)
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             else
@@ -127,60 +151,45 @@ class CameraService : LifecycleService() {
         params.gravity = Gravity.END or Gravity.CENTER_VERTICAL
         barParams = params
 
-        val slideThreshold = dp(24).toFloat()
-
         view.setOnTouchListener { v, event ->
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    downX = event.rawX
-                    lastRawY = event.rawY
-                    hasSlidLeft = false
-                    dragMode = false
-                    videoToggled = false
-                    repositionRunnable = Runnable {
-                        if (!hasSlidLeft) {
-                            dragMode = true
-                            dragStartRawY = lastRawY
-                            initialBarY = barParams?.y ?: 0
-                            colorFor(v, MODE_DRAG)
-                        }
+            if (dragMode) {
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> {
+                        dragDownRawY = event.rawY
+                        dragInitialY = barParams?.y ?: 0
+                        true
                     }
-                    handler.postDelayed(repositionRunnable!!, 2000)
-                    true
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    lastRawY = event.rawY
-                    val dx = event.rawX - downX
-                    if (dragMode) {
+                    MotionEvent.ACTION_MOVE -> {
                         val p = barParams
                         if (p != null) {
-                            p.y = initialBarY + (event.rawY - dragStartRawY).toInt()
+                            p.y = dragInitialY + (event.rawY - dragDownRawY).toInt()
                             windowManager.updateViewLayout(v, p)
                         }
-                    } else if (!hasSlidLeft && dx < -slideThreshold) {
-                        hasSlidLeft = true
-                        repositionRunnable?.let { handler.removeCallbacks(it) }
-                        videoRunnable = Runnable {
-                            videoToggled = true
+                        true
+                    }
+                    else -> true
+                }
+            } else {
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> {
+                        longPressFired = false
+                        longPressRunnable = Runnable {
+                            longPressFired = true
                             toggleRecording(v)
                         }
-                        handler.postDelayed(videoRunnable!!, 1000)
+                        handler.postDelayed(longPressRunnable!!, 1000)
+                        true
                     }
-                    true
-                }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    repositionRunnable?.let { handler.removeCallbacks(it) }
-                    videoRunnable?.let { handler.removeCallbacks(it) }
-                    if (dragMode) {
-                        dragMode = false
-                        colorFor(v, if (isRecording) MODE_RECORDING else MODE_IDLE)
-                    } else if (hasSlidLeft && !videoToggled) {
-                        takePhoto()
-                        pulse(v, 1.7f, 70)
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                        longPressRunnable?.let { handler.removeCallbacks(it) }
+                        if (!longPressFired) {
+                            takePhoto()
+                            pulse(v, 1.3f, 50)
+                        }
+                        true
                     }
-                    true
+                    else -> false
                 }
-                else -> false
             }
         }
 
@@ -190,12 +199,13 @@ class CameraService : LifecycleService() {
 
     private fun colorFor(v: View, mode: Int) {
         val alpha = when (mode) {
-            MODE_RECORDING -> 160
-            MODE_DRAG -> 100
-            else -> 35
+            MODE_RECORDING -> 120
+            MODE_DRAG -> 90
+            else -> 15
         }
+        val r = dp(64).toFloat()
         val d = GradientDrawable()
-        d.cornerRadius = dp(6).toFloat()
+        d.cornerRadii = floatArrayOf(r, r, 0f, 0f, 0f, 0f, r, r)
         d.setColor(Color.argb(alpha, 255, 255, 255))
         v.background = d
     }
@@ -213,12 +223,12 @@ class CameraService : LifecycleService() {
             recording = null
             isRecording = false
             colorFor(v, MODE_IDLE)
-            pulse(v, 2.4f, 140)
+            pulse(v, 1.6f, 140)
         } else {
             startRecording()
             isRecording = true
             colorFor(v, MODE_RECORDING)
-            pulse(v, 2.4f, 140)
+            pulse(v, 1.6f, 140)
         }
     }
 
@@ -262,6 +272,7 @@ class CameraService : LifecycleService() {
         .format(System.currentTimeMillis())
 
     private fun stopAll() {
+        isRunning = false
         recording?.stop()
         recording = null
         bar?.let { try { windowManager.removeView(it) } catch (_: Exception) {} }
@@ -299,6 +310,7 @@ class CameraService : LifecycleService() {
 
     override fun onDestroy() {
         super.onDestroy()
+        isRunning = false
         bar?.let { try { windowManager.removeView(it) } catch (_: Exception) {} }
     }
 }
