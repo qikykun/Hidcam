@@ -89,12 +89,14 @@ class MainActivity : AppCompatActivity() {
     private fun showCameraDialog() {
         val prefs = getSharedPreferences("cfg", Context.MODE_PRIVATE)
         val options = arrayOf("Kamera Belakang", "Kamera Depan")
+        val current = if (prefs.getBoolean("front", false)) 1 else 0
         AlertDialog.Builder(this)
             .setTitle("Pilih kamera")
-            .setItems(options) { _, which ->
+            .setSingleChoiceItems(options, current) { dialog, which ->
                 prefs.edit().putBoolean("front", which == 1).apply()
                 if (CameraService.isRunning) send(CameraService.ACTION_SET_CAMERA)
                 Toast.makeText(this, options[which], Toast.LENGTH_SHORT).show()
+                dialog.dismiss()
             }
             .show()
     }

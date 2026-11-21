@@ -140,7 +140,7 @@ class CameraService : LifecycleService() {
         colorFor(view, MODE_IDLE)
 
         val params = WindowManager.LayoutParams(
-            dp(64), dp(128),
+            dp(48), dp(96),
             if (Build.VERSION.SDK_INT >= 26)
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             else
@@ -177,7 +177,7 @@ class CameraService : LifecycleService() {
                             longPressFired = true
                             toggleRecording(v)
                         }
-                        handler.postDelayed(longPressRunnable!!, 1000)
+                        handler.postDelayed(longPressRunnable!!, 500)
                         true
                     }
                     MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
@@ -203,7 +203,7 @@ class CameraService : LifecycleService() {
             MODE_DRAG -> 90
             else -> 15
         }
-        val r = dp(64).toFloat()
+        val r = dp(48).toFloat()
         val d = GradientDrawable()
         d.cornerRadii = floatArrayOf(r, r, 0f, 0f, 0f, 0f, r, r)
         d.setColor(Color.argb(alpha, 255, 255, 255))
