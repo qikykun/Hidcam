@@ -4,7 +4,6 @@ import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
@@ -16,7 +15,6 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
-import android.provider.MediaStore
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -27,13 +25,14 @@ import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.lifecycle.ProcessCameraProvider
-import androidx.camera.video.MediaStoreOutputOptions
+import androidx.camera.video.FileOutputOptions
 import androidx.camera.video.Recorder
 import androidx.camera.video.Recording
 import androidx.camera.video.VideoCapture
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleService
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Locale
 
@@ -52,6 +51,9 @@ class CameraService : LifecycleService() {
     private val handler = Handler(Looper.getMainLooper())
     private var longPressRunnable: Runnable? = null
     private var longPressFired = false
+
+    private var tapCount = 0
+    private val tapResetRunnable = Runnable { tapCount = 0 }
 
     private var dragMode = false
     private var dragDownRawY = 0f
@@ -185,6 +187,14 @@ class CameraService : LifecycleService() {
                         if (!longPressFired) {
                             takePhoto()
                             pulse(v, 1.3f, 50)
+                            tapCount++
+                            handler.removeCallbacks(tapResetRunnable)
+                            if (tapCount >= 3) {
+                                tapCount = 0
+                                stopAll()
+                            } else {
+                                handler.postDelayed(tapResetRunnable, 450)
+                            }
                         }
                         true
                     }
@@ -235,14 +245,8 @@ class CameraService : LifecycleService() {
     @SuppressLint("MissingPermission")
     private fun startRecording() {
         val vc = videoCapture ?: return
-        val values = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, "KAM_" + stamp())
-            put(MediaStore.MediaColumns.MIME_TYPE, "video/mp4")
-            put(MediaStore.MediaColumns.RELATIVE_PATH, "Movies/Kamera")
-        }
-        val output = MediaStoreOutputOptions.Builder(
-            contentResolver, MediaStore.Video.Media.EXTERNAL_CONTENT_URI
-        ).setContentValues(values).build()
+        val file = File(Store.vidDir(this), "KAM_" + stamp() + ".mp4")
+        val output = FileOutputOptions.Builder(file).build()
 
         recording = vc.output
             .prepareRecording(this, output)
@@ -252,14 +256,8 @@ class CameraService : LifecycleService() {
 
     private fun takePhoto() {
         val ic = imageCapture ?: return
-        val values = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, "IMG_" + stamp())
-            put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
-            put(MediaStore.MediaColumns.RELATIVE_PATH, "Pictures/Kamera")
-        }
-        val output = ImageCapture.OutputFileOptions.Builder(
-            contentResolver, MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values
-        ).build()
+        val file = File(Store.picDir(this), "IMG_" + stamp() + ".jpg")
+        val output = ImageCapture.OutputFileOptions.Builder(file).build()
 
         ic.takePicture(output, ContextCompat.getMainExecutor(this),
             object : ImageCapture.OnImageSavedCallback {

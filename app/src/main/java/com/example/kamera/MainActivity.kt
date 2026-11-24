@@ -20,6 +20,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnFloating: Button
     private lateinit var btnDrag: Button
     private lateinit var btnCamera: Button
+    private lateinit var btnGallery: Button
     private lateinit var btnClose: Button
     private var dragOn = false
 
@@ -40,6 +41,7 @@ class MainActivity : AppCompatActivity() {
         btnFloating = findViewById(R.id.btnFloating)
         btnDrag = findViewById(R.id.btnDrag)
         btnCamera = findViewById(R.id.btnCamera)
+        btnGallery = findViewById(R.id.btnGallery)
         btnClose = findViewById(R.id.btnClose)
 
         btnFloating.setOnClickListener {
@@ -70,6 +72,10 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnCamera.setOnClickListener { showCameraDialog() }
+
+        btnGallery.setOnClickListener {
+            startActivity(Intent(this, GalleryActivity::class.java))
+        }
 
         btnClose.setOnClickListener { finish() }
 
