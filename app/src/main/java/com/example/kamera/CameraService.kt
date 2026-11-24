@@ -52,8 +52,8 @@ class CameraService : LifecycleService() {
     private var longPressRunnable: Runnable? = null
     private var longPressFired = false
 
-    private var tapCount = 0
-    private val tapResetRunnable = Runnable { tapCount = 0 }
+    private var slidDown = false
+    private var downRawY = 0f
 
     private var dragMode = false
     private var dragDownRawY = 0f
@@ -175,6 +175,8 @@ class CameraService : LifecycleService() {
                 when (event.actionMasked) {
                     MotionEvent.ACTION_DOWN -> {
                         longPressFired = false
+                        slidDown = false
+                        downRawY = event.rawY
                         longPressRunnable = Runnable {
                             longPressFired = true
                             toggleRecording(v)
@@ -182,19 +184,20 @@ class CameraService : LifecycleService() {
                         handler.postDelayed(longPressRunnable!!, 500)
                         true
                     }
+                    MotionEvent.ACTION_MOVE -> {
+                        if (!slidDown && event.rawY - downRawY > dp(60).toFloat()) {
+                            slidDown = true
+                            longPressRunnable?.let { handler.removeCallbacks(it) }
+                        }
+                        true
+                    }
                     MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                         longPressRunnable?.let { handler.removeCallbacks(it) }
-                        if (!longPressFired) {
+                        if (slidDown) {
+                            stopAll()
+                        } else if (!longPressFired) {
                             takePhoto()
                             pulse(v, 1.3f, 50)
-                            tapCount++
-                            handler.removeCallbacks(tapResetRunnable)
-                            if (tapCount >= 3) {
-                                tapCount = 0
-                                stopAll()
-                            } else {
-                                handler.postDelayed(tapResetRunnable, 450)
-                            }
                         }
                         true
                     }
