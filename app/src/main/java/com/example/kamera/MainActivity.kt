@@ -11,9 +11,12 @@ import android.provider.Settings
 import android.widget.Button
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
+import android.view.View
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 
 class MainActivity : AppCompatActivity() {
 
@@ -37,6 +40,12 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.root)) { v, insets ->
+            val b = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            val base = (24 * resources.displayMetrics.density).toInt()
+            v.setPadding(b.left + base, b.top + base, b.right + base, b.bottom + base)
+            insets
+        }
 
         btnFloating = findViewById(R.id.btnFloating)
         btnDrag = findViewById(R.id.btnDrag)

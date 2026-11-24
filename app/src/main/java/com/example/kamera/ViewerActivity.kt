@@ -5,17 +5,23 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.MediaStore
 import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.View
 import android.widget.Button
 import android.widget.ImageView
-import android.widget.MediaController
+import android.widget.LinearLayout
+import android.widget.SeekBar
+import android.widget.TextView
 import android.widget.Toast
 import android.widget.VideoView
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import java.io.File
 import kotlin.math.abs
 
@@ -26,26 +32,43 @@ class ViewerActivity : AppCompatActivity() {
 
     private lateinit var img: ImageView
     private lateinit var video: VideoView
+    private lateinit var controls: LinearLayout
+    private lateinit var btnPlay: Button
+    private lateinit var seek: SeekBar
+    private lateinit var time: TextView
     private lateinit var gesture: GestureDetector
+
+    private val handler = Handler(Looper.getMainLooper())
+    private val progress = object : Runnable {
+        override fun run() {
+            if (video.isPlaying) {
+                seek.progress = video.currentPosition
+                updateTime()
+            }
+            handler.postDelayed(this, 400)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_viewer)
+        applyInsets(findViewById(R.id.root))
 
         paths = intent.getStringArrayListExtra("paths") ?: arrayListOf()
         index = intent.getIntExtra("index", 0)
 
         img = findViewById(R.id.img)
         video = findViewById(R.id.video)
+        controls = findViewById(R.id.controls)
+        btnPlay = findViewById(R.id.btnPlay)
+        seek = findViewById(R.id.seek)
+        time = findViewById(R.id.time)
 
         gesture = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
-            override fun onFling(
-                e1: MotionEvent?, e2: MotionEvent, vx: Float, vy: Float
-            ): Boolean {
+            override fun onFling(e1: MotionEvent?, e2: MotionEvent, vx: Float, vy: Float): Boolean {
                 if (e1 == null) return false
                 val dx = e2.x - e1.x
-                val dy = e2.y - e1.y
-                if (abs(dx) > abs(dy) && abs(dx) > 120) {
+                if (abs(dx) > abs(e2.y - e1.y) && abs(dx) > 120) {
                     if (dx < 0) goTo(index + 1) else goTo(index - 1)
                     return true
                 }
@@ -53,12 +76,39 @@ class ViewerActivity : AppCompatActivity() {
             }
         })
         img.setOnTouchListener { _, e -> gesture.onTouchEvent(e); true }
-        video.setOnTouchListener { _, e -> gesture.onTouchEvent(e); false }
+        video.setOnTouchListener { _, e -> gesture.onTouchEvent(e); true }
+
+        btnPlay.setOnClickListener {
+            if (video.isPlaying) {
+                video.pause()
+                btnPlay.text = "▶"
+            } else {
+                video.start()
+                btnPlay.text = "⏸"
+                handler.post(progress)
+            }
+        }
+
+        seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar, value: Int, fromUser: Boolean) {
+                if (fromUser) { video.seekTo(value); updateTime() }
+            }
+            override fun onStartTrackingTouch(sb: SeekBar) {}
+            override fun onStopTrackingTouch(sb: SeekBar) {}
+        })
 
         findViewById<Button>(R.id.btnMove).setOnClickListener { moveToGallery() }
         findViewById<Button>(R.id.btnDelete).setOnClickListener { confirmDelete() }
 
         if (paths.isEmpty()) finish() else showCurrent()
+    }
+
+    private fun applyInsets(v: View) {
+        ViewCompat.setOnApplyWindowInsetsListener(v) { view, insets ->
+            val b = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            view.setPadding(b.left, b.top, b.right, b.bottom)
+            insets
+        }
     }
 
     private fun goTo(newIndex: Int) {
@@ -71,18 +121,35 @@ class ViewerActivity : AppCompatActivity() {
     private fun isVideo() = Store.isVideo(current())
 
     private fun showCurrent() {
+        handler.removeCallbacks(progress)
         video.stopPlayback()
         if (isVideo()) {
             img.visibility = View.GONE
             video.visibility = View.VISIBLE
-            video.setMediaController(MediaController(this))
+            controls.visibility = View.VISIBLE
+            btnPlay.text = "⏸"
             video.setVideoPath(current().absolutePath)
-            video.setOnPreparedListener { video.start() }
+            video.setOnPreparedListener {
+                seek.max = video.duration
+                updateTime()
+                video.start()
+                handler.post(progress)
+            }
         } else {
+            controls.visibility = View.GONE
             video.visibility = View.GONE
             img.visibility = View.VISIBLE
             img.setImageBitmap(decode())
         }
+    }
+
+    private fun updateTime() {
+        time.text = fmt(video.currentPosition) + " / " + fmt(video.duration)
+    }
+
+    private fun fmt(ms: Int): String {
+        val s = (if (ms < 0) 0 else ms) / 1000
+        return "%d:%02d".format(s / 60, s % 60)
     }
 
     private fun decode(): Bitmap? = try {
@@ -107,6 +174,7 @@ class ViewerActivity : AppCompatActivity() {
             .setTitle("Hapus")
             .setMessage("Hapus file ini?")
             .setPositiveButton("Hapus") { _, _ ->
+                handler.removeCallbacks(progress)
                 video.stopPlayback()
                 current().delete()
                 paths.removeAt(index)
@@ -137,6 +205,7 @@ class ViewerActivity : AppCompatActivity() {
             contentResolver.openOutputStream(uri).use { out ->
                 f.inputStream().use { input -> input.copyTo(out!!) }
             }
+            handler.removeCallbacks(progress)
             video.stopPlayback()
             f.delete()
             paths.removeAt(index)
@@ -145,5 +214,10 @@ class ViewerActivity : AppCompatActivity() {
         } catch (e: Exception) {
             Toast.makeText(this, "Gagal memindah", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        handler.removeCallbacks(progress)
     }
 }
